@@ -5,3 +5,4 @@ pdfs/
 __pycache__/
 LibreChat/
 venv/
+extract_data.py
