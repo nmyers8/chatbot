@@ -1,0 +1,9 @@
+flask
+flask-cors
+openai
+databricks-sql-connector
+faiss-cpu (if on GPU machine, faiss-GPU)
+numpy
+pypdf
+sentence-transformers
+python-dotenv

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Chatbot</title>
+
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+        <style>
+            body {
+                margin: 0;
+                height: 100vh;
+                display: flex;
+                justify-content: center;
+                align-items: center; 
+                background: white;
+            }
+
+            .container {
+                text-align: center;
+                font-size: 20px; 
+                display: flex;
+                flex-direction: column;
+                gap: 20px;
+                width: 600px;
+            }
+
+            #chatMessage {
+                min-height: 200px;
+                max-height: 400px;
+                overflow-y: auto;
+                text-align: left;
+                border: 1px solid #ccc;
+                padding: 10px;
+                border-radius: 6px;
+            }
+
+            .message {
+                margin-bottom: 10px;
+            }
+
+            input {
+                font-size: 18px;
+                padding: 12px 16px;
+                width: 70%;
+                border-radius: 6px;
+                border: 1px solid #ccc;
+            }
+
+            button {
+                background: green;
+                color: white;
+                cursor: pointer;
+                font-size: 18px;
+                padding: 12px 18px;
+                border: none;
+                border-radius: 6px;
+            }
+
+            button:hover {
+                background: darkgreen;
+            }
+
+            .inputArea {
+                display: flex;
+                width: 100%;
+                gap: 10px;
+            }
+
+            .inputArea input {
+                flex: 1;   
+            }
+
+            .inputArea button {
+                width: 120px; 
+            }
+        </style>
+    </head>
+
+    <body>
+        <div class="container">
+            <div class="inputArea"> <!-- User Input -->
+                <input type="text" id="userInput" placeholder="Ask for info regarding USA health risks or death rates" />
+                <button onclick="processMessage()">Enter</button>
+            </div>
+            <div id="chatMessage"></div> <!-- Bot Response -->
+        </div>
+
+        <script>
+            async function processMessage() {
+                const input = document.getElementById("userInput");
+                const text = input.value.trim();
+                const chat = document.getElementById("chatMessage"); // Display area
+
+                const userMsg = document.createElement("div");
+                userMsg.classList.add("message");
+                userMsg.innerHTML = "You: " + text; // Add "You:" in front of what the user said
+                chat.appendChild(userMsg); // Add what the user said to the display area so they don't forget
+
+                input.value = ""; // Clear input box
+
+                const response = await fetch("/chat", { 
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ message: text }) // send user message to backend
+                });
+
+                const data = await response.json(); // get response from LLM
+                const botMsg = document.createElement("div");
+                botMsg.classList.add("message");
+
+                if (data.error) {
+                    botMsg.innerHTML = "<b>Error:</b> " + data.error;
+                    chat.appendChild(botMsg);
+                    return;
+                } else if (data.type === "CHART") {
+                    const chartData = JSON.parse(data.content); // string to json
+
+                    const canvas = document.createElement("canvas");
+                    botMsg.appendChild(canvas);
+                    chat.appendChild(botMsg);
+
+                    const ctx = canvas.getContext("2d");
+
+                    new Chart(ctx, { // create chart given what the LLM returned
+                        type: chartData.type,
+                        data: {
+                            labels: chartData.labels,
+                            datasets: chartData.datasets
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: {
+                                    display: true
+                                }
+                            }
+                        }
+                    });
+
+                    return;
+                } else { // works for text or html table responses
+                    botMsg.innerHTML = "Response: " + data.content;
+                }
+                chat.appendChild(botMsg); // add LLM response to display area
+            }
+        </script>
+    </body>
+</html>
+
+
+

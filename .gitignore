@@ -1,0 +1,7 @@
+.env
+*.faiss
+*.pkl
+pdfs/
+__pycache__/
+LibreChat/
+venv/
