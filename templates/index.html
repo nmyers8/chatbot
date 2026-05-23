@@ -6,6 +6,7 @@
         <title>Chatbot</title>
 
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
         <style>
             body {
@@ -143,7 +144,7 @@
 
                     return;
                 } else { // works for text or html table responses
-                    botMsg.innerHTML = "Response: " + data.content;
+                    botMsg.innerHTML = "Response: " + marked.parse(data.content);
                 }
                 chat.appendChild(botMsg); // add LLM response to display area
             }

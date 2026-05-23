@@ -134,25 +134,15 @@ I am currently in the process of transitioning my frontend to LibreChat UI (http
 ## Planned Additions
 
 - Transitioning frontend to LibreChat UI
-- Improving the formatting of the AI generated responses
 - Migration from OpenAI to Ollama
+- Interactive Graphs
+- Pulling unstructured data from more sources
 
 ## Architecture
 
-User questions are routed through a two-stage decision pipeline:
-
-**Stage 1 — SQL or PDF**
-An LLM classifies the user's question as requiring either structured or unstructured data:
-
-Questions about numbers, trends, or statistics are routed to SQL, where a second LLM generates and executes a SELECT query
-
-Conceptual or research-based questions are routed to the vectorized PDFs, where the question is embedded locally and the most similar chunks are retrieved via FAISS
-
-**Stage 2 — TEXT, TABLE, or CHART**
-A separate LLM call decides what format to return the answer in based on the user's question. The supported formats are text-based, a table, or a chart. 
+User questions are routed to a separate LLM to decide the output format of the response. The supported formats are text-based, a table, or a chart. 
 
 SQL queries are validated before execution to ensure the LLM does not modify the tables in the databricks schema. User inputs are also screened by a guardrail check before any LLM calls are made.
-
 
 ## Tech Stack
 

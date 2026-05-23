@@ -5,12 +5,8 @@ import os
 from dotenv import load_dotenv
 from flask_cors import CORS
 import faiss
-import pickle
 import numpy as np
 from pdf import ingest_pdfs
-import json
-import uuid
-import time
 from sentence_transformers import SentenceTransformer
 
 load_dotenv()
@@ -72,26 +68,51 @@ def search_pdfs(question):
             )
     return "\n\n".join(results)
 
-def decide_tool(question):
-    decision_prompt = """
-You are a routing AI.
-
-Decide how to answer the question:
-
-Options:
-SQL: if the question requires structured data (numbers, trends, tables)
-PDF: if the question is conceptual, explanatory, or research-based
-
-Return ONLY one word: SQL or PDF
+def generate_sql_query(user_prompt):
+    schema_columns = ""
+    for table, columns in schema.items():
+        schema_columns += f"\nTable: {table}\nColumns:\n" + "\n".join(columns) + "\n"
+ 
+    SYSTEM_PROMPT = f"""
+You are a SQL generator.
+ 
+Available tables:
+{schema_columns}
+ 
+Rules:
+- ONLY generate SELECT statements
+- Use exact column names
+- Tables are in chatbot schema
+- You may JOIN tables if needed
+- Return ONLY SQL
+- No explanation
+- Do NOT use aliases (no AS, no table aliases like t1)
+- Always reference columns directly without shorthand
 """
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": decision_prompt},
-            {"role": "user", "content": question}
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt}
         ]
     )
-    return response.choices[0].message.content.strip().upper()
+    sql_query = response.choices[0].message.content.strip()
+    
+    # remove any leading/unwanted text the LLM could have generated
+    sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
+    if sql_query.lower().startswith("sql"):
+        sql_query = sql_query[3:].strip()
+ 
+    is_valid, error_message = validate_query(sql_query)
+    if not is_valid:
+        return None, error_message
+ 
+    with connect.cursor() as cursor:
+        cursor.execute(sql_query)
+        result = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+ 
+    return [dict(zip(columns, row)) for row in result], None
 
 def decide_output_format(question):
     prompt = """
@@ -136,67 +157,18 @@ def chat():
         return jsonify({"error": error})
 
     try:
-        tool = decide_tool(user_prompt)
         output_format = decide_output_format(user_prompt)
 
-        print(tool)
         print(output_format)
         
         data = None
         pdf_context = None
         
-        # store the column names so they don't all have to be typed out
-        schema_columns = ""
-        for table, columns in schema.items():
-            schema_columns += f"\nTable: {table}\nColumns:\n" + "\n".join(columns) + "\n"
-            
-        if tool == "SQL":
-            SYSTEM_PROMPT = f"""
-You are a SQL generator.
-
-Available tables:
-{schema_columns}
-
-Rules:
-- ONLY generate SELECT statements
-- Use exact column names
-- Tables are in chatbot schema
-- You may JOIN tables if needed
-- Return ONLY SQL
-- No explanation
-"""
-            response = client.chat.completions.create( # LLM decides what to query (what table(s) to choose)
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt}
-                ]
-            )
-
-            sql_query = response.choices[0].message.content.strip()
-
-            # remove parts of the message returned that aren't sql queries
-            sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
-            if sql_query.lower().startswith("sql"):
-                sql_query = sql_query[3:].strip()
-            is_valid, error_message = validate_query(sql_query)
-            if not is_valid:
-                return jsonify({"error": error_message})
-
-            # run query
-            with connect.cursor() as cursor:
-                cursor.execute(sql_query)
-                result = cursor.fetchall()
-                columns = [desc[0] for desc in cursor.description]
-
-            data = [dict(zip(columns, row)) for row in result]
-        elif tool == "PDF":
-            pdf_context = search_pdfs(user_prompt)
-
-            if not pdf_context.strip():
-                pdf_context = "No relevant research found."
-        
         if output_format == "CHART":
+            data, error_message = generate_sql_query(user_prompt)
+            if error_message:
+                return jsonify({"error": error_message})
+            
             # generate code for creating a chart
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -247,6 +219,10 @@ Dataset results:
                 "content": chart_json
             })
         elif output_format == "TABLE":
+            data, error_message = generate_sql_query(user_prompt)
+            if error_message:
+                return jsonify({"error": error_message})
+            
             # generate code for creating a table
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -278,22 +254,27 @@ Dataset results:
                 "content": code_output
             }) 
         else: 
-            if tool == "PDF":
-                context = pdf_context
-                PROMPT = """
-You are a public health analyst.
+            PROMPT = """
+You are a knowledgeable health data analyst.
 
-Use ONLY the research context.
-If missing, say you don't know.
+Answer the user's question using only the provided context.
+Adapt your response length and format to the question:
+- For simple factual questions (a single number or name), answer in one sentence
+- For explanatory questions, use markdown formatting:
+  - Use **bold** for key terms and important values
+  - Use bullet points for lists of effects, reasons, or items
+  - Use headers (##) to separate major sections if the response covers multiple topics
+  - Keep paragraphs short and scannable
+- Never write a wall of unbroken text
+- Do not start with "According to the dataset" or "Based on the data"
+- If the information is not in the context, say you don't know
 """
-            else:
-                context = data
-                PROMPT = """
-You are a data analyst.
-
-Use ONLY dataset results.
-Be concise and factual.
-"""
+            data, _ = generate_sql_query(user_prompt)  # ignore SQL errors, PDF could have answer
+            pdf_context = search_pdfs(user_prompt)
+ 
+            if not pdf_context.strip():
+                pdf_context = "No relevant research found."
+                
             # convert the response from a JSON object to human text
             human_response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -304,9 +285,12 @@ Be concise and factual.
                         "content": f"""
 User question:
 {user_prompt}
-
-Context:
-{context}
+ 
+Structured data results:
+{data}
+ 
+Research context:
+{pdf_context}
 """
                     }
                 ]
